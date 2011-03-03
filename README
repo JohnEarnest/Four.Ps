@@ -1,0 +1,44 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  FOUR.PS                     by John Earnest
+%  
+%  A compiler for a minimal subset of Forth,
+%  along with an associated VM and visual debugger,
+%  all implemented in PostScript.
+%  
+%  The 'prog' definition contains a string
+%  which will be compiled and run on the FOUR.PS
+%  platform. The following ANS Forth words are
+%  available:
+%  
+%  : ; exit if else then begin until repeat
+%  do loop +loop variable dup drop swap over
+%  @ ! + - = > < i i' j >r r> not and or
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Just what it says on the packet. If you'd like to give this a spin, the easiest way is to install GhostScript (http://pages.cs.wisc.edu/~ghost/) and then launch the script interactively:
+
+  >gs four.ps
+
+You'll be given the option to advance the simulation one "tick" at a time by pressing return.
+
+Otherwise, just open the file in the postscript viewer of your choice (including many PDF viewers) and be treated to a "flipbook" of the execution trace.
+
+Four.PS is released under the WTFPL, so do whatever you like with this code. If you particularly enjoy Four.PS or make some spiffy additions I'd love to hear about it.
+
+-----------------------------------------------------------------------
+
+            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE 
+                    Version 2, December 2004 
+
+ Copyright (C) 2004 Sam Hocevar <sam@hocevar.net> 
+
+ Everyone is permitted to copy and distribute verbatim or modified 
+ copies of this license document, and changing it is allowed as long 
+ as the name is changed. 
+
+            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE 
+   TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION 
+
+  0. You just DO WHAT THE FUCK YOU WANT TO. 

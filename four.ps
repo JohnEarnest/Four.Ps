@@ -1,0 +1,725 @@
+%!PS
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  FOUR.PS                     by John Earnest
+%  
+%  A compiler for a minimal subset of Forth,
+%  along with an associated VM and visual debugger,
+%  all implemented in PostScript.
+%  
+%  The 'prog' definition contains a string
+%  which will be compiled and run on the FOUR.PS
+%  platform. The following ANS Forth words are
+%  available:
+%  
+%  : ; exit if else then begin until repeat
+%  do loop +loop variable dup drop swap over
+%  @ ! + - = > < i i' j >r r> not and or
+%  
+%  For large programs you may need to crank
+%  up the core size (Forth's usable memory)
+%  or the sizes of the return and data stacks.
+%  
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/prog	( : count 10 0 do i 2 +loop ; count ) def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%  First thing's first- let's make this language
+%  look a little bit Forthier with some new words.
+%  PostScript doesn't give us memory addresses, so
+%  @/! operate on the closest thing- symbols
+%  associated with a simple variable.
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/over  { 1 index } def
+/@     { load exec } def
+/!     { exch def } def
+/inc   { dup @ 1 add exch ! } def
+/dec   { dup @ 1 sub exch ! } def
+/2dup  { 2 copy } def
+/2drop { pop pop } def
+/rot   { 3 -1 roll } def
+/-rot  { 3 1 roll } def
+/max   { 2dup lt { exch } if pop } def
+/min   { 2dup gt { exch } if pop } def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%  Ah, much better. Now we can declare the globals
+%  for our VM- We'll need a data stack, a return
+%  stack, and a global memory pool.
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/data-size     10 def
+/return-size   10 def
+/core-size   1000 def
+
+/data-arr      data-size  array def
+/return-arr  return-size  array def
+/core          core-size  array def
+
+/sptr 0 def
+/rptr 0 def
+
+/data   { /sptr   data-arr } def
+/return { /rptr return-arr } def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%  Notice that we've defined our stacks as words
+%  that push a symbol for their index pointers
+%  and an array. Let's build some stack
+%  manipulation words:
+%
+%   pop-stk (        pointer array -- value )
+%  push-stk ( value  pointer array --       )
+%   get-stk ( offset pointer array -- value )
+%
+%  'get-stk' grabs a value relative to the head
+%  of the stack non-destructively. We'll use it
+%  for things like dup and over.
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/pop-stk   { over @ get exch dec } def
+/push-stk  { over inc -rot @ exch put } def
+/get-stk   { -rot @ exch sub get } def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%  We have all the data structures we'll need,
+%  so let's go ahead and define all the opcodes for
+%  the VM.
+%  
+%  Notably, JUMP JUMPZ CALL CONST STK and RSTK
+%  take one argument- the first three use this
+%  argument as the address of their branch,
+%  CONST pushes the argument onto the VM's data
+%  stack and STK and RSTK take an argument that
+%  specifies how deep to 'pick' from the data
+%  and return stacks, respectively. All the other
+%  built-in ops are parameterless.
+%  
+%  The rest of the instruction set is pretty
+%  straightforward and self-explanatory.
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/to-boolean { { -1 } { 0 } ifelse } def
+
+/op-JUMP  { /pctr ! } def
+/op-JUMPZ { data pop-stk 0 eq { op-JUMP } { pop } ifelse } def
+/op-CALL  { pctr return push-stk /pctr ! } def
+/op-RET   { return pop-stk /pctr ! } def
+
+/op-CONST {   data push-stk } def
+/op-STK   {   data  get-stk data push-stk } def
+/op-RSTK  { return  get-stk data push-stk } def
+/op-DROP  {   data pop-stk pop } def
+/op-RDROP { return pop-stk pop } def
+
+/op-LOAD  { core data pop-stk get data push-stk } def
+/op-STORE { core data pop-stk data pop-stk put } def
+
+/op-SWAP  {   data pop-stk   data pop-stk exch   data push-stk   data push-stk } def
+/op-RSWAP { return pop-stk return pop-stk exch return push-stk return push-stk } def
+/op-RTS   { return pop-stk data push-stk } def
+/op-STR   { data pop-stk return push-stk } def
+
+/op-ADD   { data pop-stk data pop-stk exch add data push-stk } def
+/op-SUB   { data pop-stk data pop-stk exch sub data push-stk } def
+/op-NOT   {              data pop-stk      not data push-stk } def
+/op-AND   { data pop-stk data pop-stk exch and data push-stk } def
+/op-OR    { data pop-stk data pop-stk exch  or data push-stk } def
+/op-GTR   { data pop-stk data pop-stk exch  gt to-boolean data push-stk } def
+/op-LTN   { data pop-stk data pop-stk exch  lt to-boolean data push-stk } def
+/op-EQU   { data pop-stk data pop-stk exch  eq to-boolean data push-stk } def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  Finally we get to the heart of the VM- step
+%  executes a single instruction.
+%  
+%  Instructions are stored as tuples (arrays)
+%  with a symbol for the corresponding opcode
+%  as the final element. Everything in the tuple
+%  is pushed onto the stack before the opcode
+%  is called, so we can provide opcodes with as
+%  many arguments as they require.
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/pctr 0 def
+
+/step {
+	core pctr get
+	/pctr inc
+	aload pop load exec
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  The rest of the VM is basically just wrapping
+%  step in a loop, so we'll wait on that until
+%  we're ready to build the tracer.
+%  
+%  With the VM out of the way, let's get ready to
+%  construct the compiler. PostScript comes with
+%  an extremely crude set of string manipulation
+%  facilities out of the box, so let's remedy this:
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/to-string {
+	dup type /stringtype eq not {20 string cvs} if
+} def
+
+/string-concat {
+	to-string exch to-string exch
+	2dup length exch length add string
+	dup dup 4 3 roll 4 index
+	length exch putinterval -rot exch
+	0 exch putinterval
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  Forth tokens are any sequence of characters,
+%  delimited by whitespace. If it isn't a number,
+%  it's a word. For our purposes, numbers are
+%  positive or negative integers. If we find
+%  a token that can be parsed as an integer, we
+%  go ahead and convert it to reduce the compiler's
+%  responsibilities.
+%  
+%  As you can see by a few of these definitions,
+%  the lack of case-select statements, short-circuiting
+%  and a non-kludgy way to exit a word early makes
+%  complex conditions really clumsy in PostScript.
+%  Your best bet is to try to factor your branching
+%  logic into words that consume and emit flags.
+%  In the VM and the compiler proper, I sidestep
+%  this issue by manipulating and executing symbols.
+%  
+%  word ( -- token? found-flag )
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/tab?       {  9 eq } def
+/newline?   { 10 eq } def
+/space?     { 32 eq } def
+/minus?     { 45 eq } def
+
+/white?     { dup dup tab? exch newline? or exch space? or } def
+/digit?     { dup 48 ge exch 57 le and } def
+/number?	{
+	dup length 1 gt over 0 get exch over minus? and exch digit? or exch
+	dup length 1 sub 1 1 rot { over exch get digit? rot and exch } for pop
+} def
+
+/head    0 def
+/tail    0 def
+/size-t  prog length 1 sub def
+
+/index-t      { head tail add } def
+/current-t    { index-t size-t le { prog index-t get } { 32 } ifelse } def
+/skip-white   { { current-t white? { /head inc } { exit } ifelse } loop } def
+/find-white   { { current-t white? { exit } { /tail inc } ifelse } loop } def
+/get-word     { prog head tail getinterval } def
+/more-tokens? { false head 1 size-t { prog exch get white? not or } for } def
+
+/word {
+	more-tokens? dup {
+		skip-white
+		find-white
+		get-word
+		dup number? { cvi } if
+		exch
+		/head head tail add def
+		/tail 0 def
+	} if
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  Now we need a few words for manipulating
+%  the Forth dictionary. We'll store strings in
+%  core memory as markers for the beginning
+%  of a Forth word. 'here' is a marker for
+%  the tail of the Forth dictionary.
+%  
+%  As compiler authors, we must sometimes lie
+%  to tell the truth. In this case, we don't want
+%  to provide a real immediate mode- we'd like
+%  to execute orphaned code fragments as if
+%  they were part of a word. That is, step-by-step
+%  in the debugger like anything else. To this
+%  end, we create a pair of words that cause
+%  the dictionary to build up immediate instructions
+%  in a separate buffer- we'll add this special
+%  word to the main dictionary when we're done
+%  compiling and make it our entrypoint,
+%  providing an illusion that immediate code
+%  executes 'first'.
+%  
+%     compiling (      --                     )
+%  interpreting (      --                     )
+%      add-word (  any --                     )
+%     find-word ( name -- address? found-flag )
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/here-com    0 def
+/here-int    0 def
+/core-int  100 array def
+
+/compiling   {
+	/here     { here-com }      def
+	/inc-here { /here-com inc } def
+	/memory   { core }          def
+} def
+
+/interpreting {
+	/here     { here-int }      def
+	/inc-here { /here-int inc } def
+	/memory   { core-int }      def
+} def
+
+interpreting
+
+/add-word  { memory here rot put inc-here } def
+/find-word {
+	false exch
+	here-com -1 0 {
+		core over get
+		2 index eq { -rot 2drop true () exit } if
+		pop
+	} for
+	pop
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  This compiler takes care of all the immediate
+%  words of our Forth system. Here are definitions
+%  for those words. Notice that the control flow
+%  constructs handle forward and backward references
+%  by storing addresses directly on the PostScript
+%  data stack. 'patch-addr' makes the process of
+%  updating an existing instruction's first
+%  argument a little easier to follow.
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/patch-addr { memory exch get 0 here put } def
+/add-return { [ /op-RET ] add-word } def
+
+/imm-:      { compiling word pop to-string add-word } def
+/imm-;      { add-return interpreting } def
+/imm-exit   { add-return } def
+/imm-if     { here [ -1 /op-JUMPZ ] add-word } def
+/imm-else   { here exch [ -1 /op-JUMP ] add-word patch-addr } def
+/imm-then   { patch-addr } def
+/imm-begin  { here } def
+/imm-until  { [ exch /op-JUMPZ ] add-word } def
+/imm-repeat { [ exch /op-JUMP  ] add-word } def
+
+/imm-do {
+	[ /op-SWAP ] add-word
+	[ /op-STR ] add-word
+	[ /op-STR ] add-word
+	here
+} def
+
+/imm-loop {
+	[ ([loop]) find-word pop 1 add /op-CALL ] add-word
+	[ exch /op-JUMPZ ] add-word
+	[ /op-RDROP ] add-word
+	[ /op-RDROP ] add-word
+} def
+
+/imm-+loop {
+	[ ([+loop]) find-word pop 1 add /op-CALL ] add-word
+	[ exch /op-JUMPZ ] add-word
+	[ /op-RDROP ] add-word
+	[ /op-RDROP ] add-word
+} def
+
+/imm-variable {
+	compiling
+	word pop to-string add-word
+	[ here 2 add /op-CONST ] add-word
+	add-return
+	0 add-word
+	interpreting
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  When we're done compiling, we need to copy our
+%  immediate-mode buffer into the main dictionary
+%  and fix the targets of any branch instructions.
+%  CALLs and LOAD/STORE operations will all be fine
+%  because word references always point to the
+%  primary dictionary.
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/append-immediate {
+	compiling
+	([entrypoint]) add-word
+	/base-here here def
+	0 1 here-int 1 sub {
+		core-int exch get
+		dup dup dup length 1 sub get
+		dup /op-JUMP eq exch /op-JUMPZ eq or
+		{ dup 0 get base-here add 0 exch put }
+		{ pop } ifelse
+		add-word
+	} for
+	add-return
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  Now we're ready for the heart of the compiler.
+%  
+%  We read tokens one at a time using our tokenizer,
+%  compiling numbers into numeric literals.
+%  The dictionary is consulted, and if we find
+%  the definition we will compile a call.
+%  Failing that, we assume the unknown word
+%  is an immediate word and turn it into the
+%  appropriate symbol to reference one of the
+%  above. This will fail if the word isn't
+%  one of these immediates either (ie it is
+%  undefined), but we could catch that exception
+%  externally.
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/imm-symbol { (imm-) exch string-concat cvn } def
+
+/compile-word {
+	dup find-word
+	{ 1 add [ exch /op-CALL ] add-word pop }
+	{ imm-symbol load exec } ifelse
+} def
+
+/compile {
+	{
+		word not { exit } if
+		dup type /integertype eq
+		{ [ exch /op-CONST ] add-word }
+		{ compile-word } ifelse
+
+	} loop
+	append-immediate
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  Set up a base dictionary that gives us access
+%  to the machine primitive operations and then
+%  copy this into the beginning of the core.
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/baserom [
+	(dup)  [ 0  /op-STK ] [ /op-RET ]
+	(over) [ 1  /op-STK ] [ /op-RET ]
+	(drop) [   /op-DROP ] [ /op-RET ]
+	(swap) [   /op-SWAP ] [ /op-RET ]
+	(@)    [   /op-LOAD ] [ /op-RET ]
+	(!)    [  /op-STORE ] [ /op-RET ]
+	(+)    [    /op-ADD ] [ /op-RET ]
+	(-)    [    /op-SUB ] [ /op-RET ]
+	(not)  [    /op-NOT ] [ /op-RET ]
+	(and)  [    /op-AND ] [ /op-RET ]
+	(or)   [    /op-OR  ] [ /op-RET ]
+	(=)    [    /op-EQU ] [ /op-RET ]
+	(>)    [    /op-GTR ] [ /op-RET ]
+	(<)    [    /op-LTN ] [ /op-RET ]
+	(i)    [ 1 /op-RSTK ] [ /op-RET ]
+	(i')   [ 2 /op-RSTK ] [ /op-RET ]
+	(j)    [ 3 /op-RSTK ] [ /op-RET ]
+	(r>)   [  /op-RSWAP ] [   /op-RTS ] [ /op-RET ]
+	(>r)   [    /op-STR ] [ /op-RSWAP ] [ /op-RET ]
+
+	%% both of these looping primitives
+	%% are very useful, but they seriously
+	%% suck from an implementation standpoint.
+	%% everything else is so much simpler.
+
+	([loop])  [ /op-RTS ] [  /op-RTS ] [ 1 /op-CONST ] [    /op-ADD ]
+	          [ /op-STR ] [  /op-STR ] [ 2  /op-RSTK ] [ 1 /op-RSTK ]
+	          [ /op-GTR ] [  /op-NOT ] [     /op-RET ]
+
+	([+loop]) [ /op-RTS ] [ /op-SWAP ] [     /op-RTS ] [    /op-ADD ]
+	          [ /op-STR ] [  /op-STR ] [ 2  /op-RSTK ] [ 1 /op-RSTK ]
+	          [ /op-GTR ] [  /op-NOT ] [     /op-RET ]
+] def
+
+baserom core copy pop
+baserom length /here-com !
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  Now we're all set to compile and run our Forth
+%  programs. Our final task is to draw graphics
+%  for the execution trace. Let's start by
+%  defining some words for drawing stacks:
+%  
+%   draw-rect (    width height -- )
+%   draw-cell (           label -- )
+%  draw-stack ( ptr array label -- )
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/cell-width     70 def
+/cell-height    20 def
+/cell-spacing    4 def
+/cell-fontsize  10 def
+/stack-fontsize 12 def
+/stack-elements 10 def
+
+/stack-height   cell-spacing cell-height add stack-elements mul def
+
+/draw-rect {
+	0 setlinewidth
+	over        0            rlineto
+	0           over         rlineto
+	over -1 mul 0            rlineto
+	0           over -1 mul  rlineto
+	2drop
+} def
+
+/draw-cell {
+	cell-spacing 0           rmoveto
+	cell-width   cell-height draw-rect
+	
+	gsave
+		/Courier findfont cell-fontsize scalefont setfont
+		dup stringwidth
+		cell-height exch sub 2 div 2 sub exch
+		cell-width  exch sub 2 div exch
+		rmoveto show
+	grestore
+
+	cell-spacing -1 mul
+	cell-height cell-spacing add -1 mul
+	rmoveto
+} def
+
+/draw-stack {
+	gsave
+		/Courier findfont stack-fontsize scalefont setfont
+		2 0 rmoveto show
+	grestore
+
+	0 cell-spacing 3 mul -1 mul rmoveto
+
+	% stack sidelines
+	0 stack-height -1 mul rlineto
+	0 stack-height rmoveto
+	cell-spacing 2 mul cell-width add 0 rmoveto
+	0 stack-height -1 mul rlineto
+	cell-spacing 2 mul cell-width add -1 mul stack-height rmoveto
+
+	0 cell-height -1 mul rmoveto
+	
+	over @ 1 sub 0 1 rot {
+		2 index 2 index get-stk
+		to-string draw-cell
+	} for
+
+	2drop
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  We're going to need some support words for
+%  the next section, as the code display requires
+%  disassembling the dictionary.
+%  
+%  'op-string' is designed to decode instructions
+%  with one or zero parameters- if you wish to
+%  add instructions that use more parameters
+%  you should modify this definition accordingly.
+%  Furthermore, we make the assumption here that
+%  opcode symbols always start with the prefix 'op-'.
+%  
+%  'this-word' determines the name of the current
+%  executing word and provides a range of addresses
+%  for the instructions of the word (inclusive)
+%  
+%  op-string  ( tuple -- mnemonic )
+%  this-word  (       -- start end name )
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/op-string {
+	dup dup length 1 sub get to-string
+	dup length 3 sub 3 exch getinterval
+	exch dup length 1 gt
+	{ 0 get to-string ( ) exch string-concat string-concat }
+	{ pop } ifelse
+} def
+
+/this-word {	
+	() pctr {
+		dup core exch get
+		dup type /stringtype eq { rot pop exit } if
+		pop
+		1 sub
+	} loop
+	pctr {
+		dup core exch get
+		type /arraytype eq not { exit } if
+		1 add
+	} loop
+	1 sub exch
+	rot 1 add -rot
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  We need to be able to draw the machine
+%  instructions of the current word, with an
+%  indicator for the program counter's location:
+%  
+%  draw-arrow (               -- )
+%  draw-word  ( tuple address -- )
+%  draw-code  (               -- )
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/code-width    70 def
+/code-height   30 def
+/code-fontsize 10 def
+/arrow-width   10 def
+
+/draw-arrow {
+	0 setlinewidth
+	0 code-height rlineto
+	arrow-width code-height 2 div -1 mul rlineto
+	arrow-width -1 mul code-height 2 div -1 mul rlineto
+} def
+
+/draw-word {
+	code-width code-height draw-rect
+
+	gsave
+		/Courier findfont code-fontsize scalefont setfont
+		to-string dup stringwidth
+
+		code-height exch sub 2 div 2 sub exch
+		6 add -1 mul exch
+		rmoveto show
+	grestore
+
+	gsave
+		/Courier findfont code-fontsize scalefont setfont
+		op-string dup stringwidth
+
+		code-height exch sub 2 div 2 sub exch
+		code-width  exch sub 2 div exch
+		rmoveto show
+	grestore
+
+	0 code-height -1 mul rmoveto
+} def
+
+/draw-code {
+	this-word
+	gsave
+		/Courier findfont stack-fontsize scalefont setfont
+		2 0 rmoveto show
+	grestore
+	0 code-height 6 add -1 mul rmoveto
+	
+	1 exch {
+		dup pctr eq { draw-arrow } if
+		dup core exch get exch draw-word
+	} for
+} def
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  Alright- let's roll. Bring everything together:
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/step-counter 0 def
+
+/draw-page {
+	newpath
+		/Courier findfont 12 scalefont setfont
+		100 680 moveto
+		prog show
+		100 640 moveto
+		(step: ) step-counter string-concat show
+	stroke
+
+	newpath
+		100 600 moveto
+		draw-code
+	stroke
+
+	newpath
+		250 600 moveto
+		data (Data:) draw-stack
+	stroke
+
+	newpath
+		400 600 moveto
+		return (Return:) draw-stack
+	stroke
+
+	showpage
+} def
+
+compile
+
+([entrypoint]) find-word pop 1 add /pctr !
+
+{
+	rptr 0 lt { exit } if
+	draw-page
+	step
+	/step-counter inc
+} loop
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  
+%  ...And the crowd goes wild!
+%  
+%  Thanks for following along. Hopefully I've managed
+%  to pique your interest in PostScript and Forth!
+%  I've tried to keep this compiler as clear and
+%  straightforward as possible, and I highly
+%  encourage you to extend it. Try adding new
+%  words to the base dictionary, creating new
+%  machine instructions or tackle basic optimizations
+%  like inlining and tail-call elimination.
+%  
+%  For further reading, check out these books
+%  about Forth and PostScript:
+%  
+%  "The PostScript Language Reference Manual" by Adobe Systems[1]
+%  "Thinking in PostScript" by Glenn Reid[2]
+%  "Starting Forth" by Leo Brodie[3]
+%  "Thinking Forth" also by Leo Brodie[4]
+%
+%  [1]http://partners.adobe.com/public/developer/en/ps/PLRM.pdf
+%  [2]http://amath.colorado.edu/documentation/postscript/ThinkingInPostScript.pdf
+%  [3]http://home.iae.nl/users/mhx/sf.html
+%  [4]http://thinking-forth.sourceforge.net/
+%  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
