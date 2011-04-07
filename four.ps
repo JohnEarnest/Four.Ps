@@ -198,14 +198,9 @@
 %  go ahead and convert it to reduce the compiler's
 %  responsibilities.
 %  
-%  As you can see by a few of these definitions,
-%  the lack of case-select statements, short-circuiting
-%  and a non-kludgy way to exit a word early makes
-%  complex conditions really clumsy in PostScript.
-%  Your best bet is to try to factor your branching
-%  logic into words that consume and emit flags.
-%  In the VM and the compiler proper, I sidestep
-%  this issue by manipulating and executing symbols.
+%  Note the use of 'stopped' to capture the error
+%  produced by 'cvi', allowing us to hijack this
+%  existing operator to check number formats.
 %  
 %  word ( -- token? found-flag )
 %  
@@ -214,14 +209,9 @@
 /tab?       {  9 eq } def
 /newline?   { 10 eq } def
 /space?     { 32 eq } def
-/minus?     { 45 eq } def
 
 /white?     { dup dup tab? exch newline? or exch space? or } def
-/digit?     { dup 48 ge exch 57 le and } def
-/number?	{
-	dup length 1 gt over 0 get exch over minus? and exch digit? or exch
-	dup length 1 sub 1 1 rot { over exch get digit? rot and exch } for pop
-} def
+/number?    { { cvi } stopped not exch pop } def
 
 /head    0 def
 /tail    0 def
